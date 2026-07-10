@@ -11,7 +11,10 @@ set -eu
 
 HM_DIR="$HOME/.config/home-manager"
 HM_URL="git@github.com:tongsama/home-manager.git"
-ND_DIR="$(cd "$(dirname "$0")" && pwd)"   # このスクリプトのある nix-on-droid_hm
+# symlink 経由でも、どのディレクトリから実行しても動くよう、スクリプト実体の場所を解決する
+# (readlink -f で symlink をたどって絶対パス化)。
+SCRIPT="$(readlink -f "${BASH_SOURCE[0]}")"
+ND_DIR="$(cd "$(dirname "$SCRIPT")" && pwd)"   # このスクリプト実体のある nix-on-droid_hm
 
 # home-manager をローカルに用意 (無ければ clone、あれば fast-forward pull)。
 # ローカルに未コミット変更/独自コミットがあり pull できない場合はスキップして
@@ -25,8 +28,8 @@ else
   git clone "$HM_URL" "$HM_DIR"
 fi
 
-cd "$ND_DIR"
-nix-on-droid switch --flake .
+# --flake は「.」(カレント) ではなく実体の絶対パスを渡す (symlink/任意 cwd 対応)。
+nix-on-droid switch --flake "$ND_DIR"
 
 # 補足:
 # - nix-on-droid.nix (system 設定) を編集した場合も上記でそのまま反映される
