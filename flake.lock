@@ -21,19 +21,6 @@
         "type": "github"
       }
     },
-    "myhome": {
-      "flake": false,
-      "locked": {
-        "lastModified": 1783648485,
-        "narHash": "sha256-0OZ4Ra/GQJiSWdx+qWchAQtysNU2Ch76aTBw9w+6gKg=",
-        "path": "/data/data/com.termux.nix/files/home/.config/home-manager",
-        "type": "path"
-      },
-      "original": {
-        "path": "/data/data/com.termux.nix/files/home/.config/home-manager",
-        "type": "path"
-      }
-    },
     "nix-formatter-pack": {
       "inputs": {
         "nixpkgs": [
@@ -190,7 +177,6 @@
     "root": {
       "inputs": {
         "home-manager": "home-manager",
-        "myhome": "myhome",
         "nix-on-droid": "nix-on-droid",
         "nixpkgs": "nixpkgs"
       }

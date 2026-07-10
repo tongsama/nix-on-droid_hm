@@ -9,12 +9,17 @@ home-manager リポジトリ [github:tongsama/home-manager](https://github.com/t
 
 | ファイル | 役割 |
 |---|---|
-| `flake.nix` | 入力 (nixpkgs / nix-on-droid / home-manager / myhome) のバージョン固定と出力定義 |
+| `flake.nix` | 入力 (nixpkgs / nix-on-droid / home-manager) のバージョン固定と出力定義。home-manager 本体は `myhome` (文字列パス) で参照 |
 | `nix-on-droid.nix` | 端末 (system) 設定 — パッケージ, sshd, timezone, termux 統合。`home-manager.config` で home-manager のモジュールを上書き |
-| `HM-update.sh` | 2 回目以降の更新/反映スクリプト (ローカル home-manager を override で使用) |
+| `HM-update.sh` | 2 回目以降の更新/反映スクリプト (ローカル home-manager を clone/pull して反映) |
 
-`myhome` = home-manager 本体。初回は clone/git 不要にするため既定を github にしてあり、
-ローカル編集を反映したいときだけ `--override-input` で path に差し替える (後述)。
+`myhome` = home-manager 本体 (このユーザの config repo) のローカルパス。
+**nix-on-droid の `switch` は `--override-input` を受け付けない** (nix / home-manager コマンドとは別物)
+ため、flake input で切り替える手が使えない。そこで `myhome` を **flake input にせず「文字列パス」**
+として渡している (flake.nix の `outputs` 内)。switch は `--impure` なのでこの絶対パスが毎回読み直され、
+ローカル編集がそのまま反映される。**`flake.lock` には現れない**ので環境依存の churn も起きない。
+よって普段は clone 済みの home-manager を編集して `--flake .` で反映する。初回だけ、まだ clone が
+無いので先に git で clone してから switch する (後述)。
 
 ## 対象バージョン (揃える必要あり)
 
@@ -76,9 +81,10 @@ git ls-remote --heads https://github.com/nix-community/nix-on-droid.git \
 前提: nix-on-droid アプリはインストール済みで `nix` / `nix-on-droid` コマンドが使える。
 まだ `git` も `sshd` も入っていない、まっさらな状態を想定。
 
-nix-on-droid の `switch` は **remote flake を直接指定でき、Nix 内蔵の fetcher で
-ソースを取得する** ため、`git` バイナリが無くても clone 無しで実行できる。
-**age 秘密鍵を switch 前に置いておけば、この初回 switch 1 回で secret 一式まで配置**される。
+`myhome` がローカル path 既定 (nix-on-droid は `--override-input` 非対応のため) なので、
+初回は「home-manager を clone → その path を使って switch」する。`git` はまだ無いが
+`nix shell nixpkgs#git` で一時的に使える。**age 秘密鍵を switch 前に置いておけば、
+この switch で secret 一式まで配置**される。
 
 ### 0. (PC) home-manager を一時的に public にする
 
@@ -123,25 +129,34 @@ chmod 600 "$SOPSCONF_DIR/keys.txt"
 >   自体は完走する (後から鍵を置いて再 switch すれば反映される)。状態は
 >   `hm-ssh-secrets status` / `hm-vim-secrets status` / `hm-oci-secrets status` で確認できる。
 
-### 2. (端末) 1 コマンドで switch
+### 2. (端末) 2 つの repo を clone して switch
 
-nix-on-droid アプリのシェルで:
+`myhome` がローカル path 既定 (nix-on-droid は `--override-input` 非対応) なので、
+先に home-manager と nix-on-droid_hm を clone する。`git` はまだ無いので `nix shell nixpkgs#git`
+で一時的に使う (home-manager は手順 0 で public にしてあるので HTTPS で clone できる):
 
 ```sh
-nix-on-droid switch --flake github:tongsama/nix-on-droid_hm
+mkdir -p ~/.config
+
+nix shell nixpkgs#git -c \
+  git clone https://github.com/tongsama/nix-on-droid_hm ~/.config/nix-on-droid_hm
+nix shell nixpkgs#git -c \
+  git clone https://github.com/tongsama/home-manager ~/.config/home-manager
+
+nix-on-droid switch --flake ~/.config/nix-on-droid_hm
 ```
 
-これだけで:
+これで:
 
 - `git` / `openssh` などのパッケージが入る (`environment.packages`)
 - `build.activation.sshdSetup` が走り、**sshd の host 鍵・`sshd_config`・`authorized_keys`** が生成される
 - home 環境 (home-manager) が適用される
 - 手順 1 の age 鍵があるので、**secret 一式 (SSH 秘密鍵・`~/.vimrc-secrets`・OCI 鍵) も配置**される
 
-> flakes が未有効でエラーになる場合は experimental features を明示:
+> flakes が未有効でエラーになる場合は、`nix-on-droid` に CLI フラグを渡すのではなく
+> (受け付けないため) 環境変数で有効化してから実行する:
 > ```sh
-> nix-on-droid switch --flake github:tongsama/nix-on-droid_hm \
->   --extra-experimental-features 'nix-command flakes'
+> export NIX_CONFIG='experimental-features = nix-command flakes'
 > ```
 
 ### 3. (端末) sshd を起動し、PC から接続
@@ -161,7 +176,7 @@ ssh -p 8023 <user>@<端末IP>
 
 ### 4. home-manager を private に戻す
 
-以後はローカル override 運用 (下記) で github fetch を伴わないため、private のままで問題ない。
+以後はローカル運用 (`--flake .`) で github fetch を伴わないため、private のままで問題ない。
 手順 2 の switch で (home-manager 経由で) **`gh` が入る**ので、端末からでも戻せる (PC からでも可):
 
 ```sh
@@ -177,21 +192,8 @@ gh repo edit tongsama/home-manager --visibility private
 
 ## 2 回目以降 (ローカル編集 + commit)
 
-`~/.config/home-manager` を端末にローカル clone し、それを直接編集/commit しながら
-反映する。ローカル override を使うので **private のままで OK**、かつ **未コミットの編集も即反映** される。
-
-### 準備: git 認証
-
-初回セットアップ手順 1〜2 で **sops の SSH 秘密鍵が `~/.ssh/` に配置済み**なので、その鍵で
-private repo の clone / commit / push ができる。**端末で改めて SSH 鍵を作り直す必要はない**。
-(GitHub に未登録の鍵しか無い場合のみ、公開鍵を GitHub に登録するか https + PAT を使う)
-
-### clone
-
-```sh
-git clone git@github.com:tongsama/nix-on-droid_hm ~/.config/nix-on-droid_hm
-git clone git@github.com:tongsama/home-manager     ~/.config/home-manager
-```
+初回セットアップで clone 済みの `~/.config/home-manager` を直接編集し、`HM-update.sh` で反映する。
+`myhome` がローカル path なので **private のままで OK**、**未コミットの編集もそのまま反映** される。
 
 ### 反映
 
@@ -199,59 +201,30 @@ git clone git@github.com:tongsama/home-manager     ~/.config/home-manager
 ~/.config/nix-on-droid_hm/HM-update.sh
 ```
 
-`HM-update.sh` は `~/.config/home-manager` が無ければ clone・あれば pull した上で、
-次の 1 コマンドを実行する (ローカルの両 repo を使う):
+`HM-update.sh` が行うこと:
 
-```sh
-nix-on-droid switch \
-  --flake "$HOME/.config/nix-on-droid_hm" \
-  --override-input myhome "path:$HOME/.config/home-manager"
-```
+1. `~/.config/home-manager` を pull (無ければ clone)
+2. `nix-on-droid switch --flake ~/.config/nix-on-droid_hm`
 
-- `~/.config/home-manager` を直接編集 → `HM-update.sh` で即反映
-  (`--override-input` は path をその都度読むので `nix flake update` 不要・コミット前でも反映)
-- 編集した home-manager はそのまま `git commit` / `push` できる
-- `nix-on-droid.nix` (system 設定) を編集した場合も、`--flake` がローカルの
-  nix-on-droid_hm を指しているのでそのまま反映される
+- `myhome` は文字列パス (flake input ではない) で、switch は `--impure` なので毎回ローカル内容を
+  読み直す。よって `~/.config/home-manager` を直接編集 → `HM-update.sh` で反映される
+  (`nix flake update` 不要・未コミット変更も反映)。編集はそのまま `git commit` / `push` できる。
+- `nix-on-droid.nix` (system 設定) を編集した場合もそのまま反映される (`--flake` がローカルの nix-on-droid_hm を指すため)。
+- `flake.lock` は home-manager のローカル内容に依存しない (myhome は input でないため)。編集しても churn しない。
 
-### nix-on-droid コマンドを手打ちしたい場合 (override を省く)
+### git 認証
 
-`HM-update.sh` を使わず `nix-on-droid switch --flake .` だけでローカルの home-manager を
-使いたい (毎回 `--override-input` を打ちたくない) 場合は、`flake.nix` の `myhome` の url を
-ローカル path に書き換える手もある:
-
-```nix
-myhome = {
-  # url = "github:tongsama/home-manager";              # 既定 (初回ブートストラップ用)
-  url = "path:/data/data/com.termux.nix/files/home/.config/home-manager";
-  flake = false;
-};
-```
-
-こうすると override 不要でローカルを使える:
-
-```sh
-nix-on-droid switch --flake .
-```
-
-ただし注意:
-
-- `flake.lock` に端末固有の絶対パスが記録され、ローカル編集の度に lock が書き換わる
-  (git ノイズになる)。
-- この変更を **commit / push しない**こと。push すると初回ブートストラップ
-  (github 一発) が壊れる。端末ローカルだけの変更に留めるか、push 前に github url へ戻す。
-- 通常は `HM-update.sh` 経由 (override 版) の方が `flake.lock` が汚れず安全。
+初回セットアップで **sops の SSH 秘密鍵が `~/.ssh/` に配置済み**なので、その鍵で
+private repo の pull / commit / push ができる。端末で改めて SSH 鍵を作り直す必要はない。
+(GitHub に未登録の鍵しか無い場合のみ、公開鍵を GitHub に登録するか https + PAT を使う)
 
 ### base 入力 (nixpkgs 等) の更新
 
-nixpkgs / home-manager / nix-on-droid 自体を更新したいときのみ:
+nixpkgs / home-manager / nix-on-droid 自体を更新したいときは:
 
 ```sh
 cd ~/.config/nix-on-droid_hm && nix flake update
 ```
-
-> 注意: home-manager が private の間は `myhome` (github) の再ロックが認証で失敗しうる。
-> 更新時だけ一時的に public にするか、`myhome` を除いて更新する。
 
 ---
 
